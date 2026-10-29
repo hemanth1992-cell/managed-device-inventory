@@ -1,74 +1,144 @@
-package com.example.manageddeviceinventory.core.crypto;
+package com.example.manageddeviceinventory.core.config;
 
-import javax.crypto.Cipher;
-import javax.crypto.spec.GCMParameterSpec;
-import javax.crypto.spec.SecretKeySpec;
-import java.security.SecureRandom;
-import java.util.Base64;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Map;
+import java.util.Properties;
 
-public class CryptoUtil {
-    public static final String TRANSFORMATION = "AES/GCM/NoPadding";
-    private static final int GCM_TAG_LENGTH_BITS = 128;
-    private static final int IV_BYTES = 12;
-    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+public class AgentConfig {
+    public static final String DEFAULT_BASE_URL = "https://inventory.example.com";
 
-    public static byte[] createKey() {
-        byte[] key = new byte[32];
-        SECURE_RANDOM.nextBytes(key);
-        return key;
+    private String baseUrl = DEFAULT_BASE_URL;
+    private int connectTimeoutSeconds = 10;
+    private int requestTimeoutSeconds = 30;
+    private String transportEncoding = "json";
+    private String authMode = "mtls";
+    private String clientCertificateAlias = "managed-device-inventory";
+    private int minimumTlsVersion = 12;
+    private int collectionIntervalSeconds = 3600;
+    private boolean locationEnabled = false;
+    private long queueMaxBytes = 268435456L;
+    private int retryInitialSeconds = 60;
+    private int retryMaxSeconds = 3600;
+    private boolean resetAcknowledgedOnStart = false;
+    private int pauseMinutes = 60;
+    private String loggingLevel = "INFO";
+    private int loggingRetentionDays = 14;
+
+    public static AgentConfig load(Path file) throws IOException {
+        Properties p = new Properties();
+        try (InputStream in = Files.newInputStream(file)) {
+            p.load(in);
+        }
+        return fromProperties(p);
     }
 
-    public static EncryptedPayload encrypt(byte[] key, byte[] plaintext, byte[] associatedData) {
-        try {
-            byte[] nonce = new byte[IV_BYTES];
-            SECURE_RANDOM.nextBytes(nonce);
-            Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-            GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH_BITS, nonce);
-            SecretKeySpec keySpec = new SecretKeySpec(key, "AES");
-            cipher.init(Cipher.ENCRYPT_MODE, keySpec, spec);
-            if (associatedData != null && associatedData.length > 0) {
-                cipher.updateAAD(associatedData);
-            }
-            byte[] ciphertext = cipher.doFinal(plaintext);
-            return new EncryptedPayload(nonce, ciphertext);
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to encrypt payload", e);
+    public static AgentConfig fromProperties(Properties p) {
+        Map<String, String> map = new java.util.HashMap<>();
+        p.forEach((k, v) -> map.put(String.valueOf(k), String.valueOf(v)));
+        return fromProperties(map);
+    }
+
+    public static AgentConfig fromProperties(Map<String, String> map) {
+        AgentConfig config = new AgentConfig();
+        config.baseUrl = map.getOrDefault("server.base_url", DEFAULT_BASE_URL);
+        config.connectTimeoutSeconds = Integer.parseInt(map.getOrDefault("server.connect_timeout_seconds", "10"));
+        config.requestTimeoutSeconds = Integer.parseInt(map.getOrDefault("server.request_timeout_seconds", "30"));
+        config.transportEncoding = map.getOrDefault("transport.encoding", "json");
+        config.authMode = map.getOrDefault("auth.mode", "mtls");
+        config.clientCertificateAlias = map.getOrDefault("auth.client_certificate_alias", "managed-device-inventory");
+
+        String tlsVersion = map.getOrDefault("tls.minimum_version", "1.2");
+        config.minimumTlsVersion = switch (tlsVersion) {
+            case "1.2" -> 12;
+            case "1.3" -> 13;
+            default -> throw new IllegalArgumentException("tls.minimum_version must be 1.2 or 1.3");
+        };
+
+        config.collectionIntervalSeconds = Integer.parseInt(map.getOrDefault("collection.interval_seconds", "3600"));
+        config.locationEnabled = Boolean.parseBoolean(map.getOrDefault("collection.location.enabled", "false"));
+        config.queueMaxBytes = Long.parseLong(map.getOrDefault("queue.max_bytes", "268435456"));
+        config.retryInitialSeconds = Integer.parseInt(map.getOrDefault("queue.retry_initial_seconds", "60"));
+        config.retryMaxSeconds = Integer.parseInt(map.getOrDefault("queue.retry_max_seconds", "3600"));
+        config.resetAcknowledgedOnStart = Boolean.parseBoolean(map.getOrDefault("queue.reset_acknowledged_on_start", "false"));
+        config.pauseMinutes = Integer.parseInt(map.getOrDefault("ui.pause_minutes", "60"));
+        config.loggingLevel = map.getOrDefault("logging.level", "INFO");
+        config.loggingRetentionDays = Integer.parseInt(map.getOrDefault("logging.retention_days", "14"));
+        config.validate();
+        return config;
+    }
+
+    public void validate() {
+        if (baseUrl == null || !baseUrl.startsWith("https://") || baseUrl.length() <= "https://".length()) {
+            throw new IllegalArgumentException("Invalid server.base_url value");
+        }
+        if (connectTimeoutSeconds < 1 || connectTimeoutSeconds > 300) {
+            throw new IllegalArgumentException("server.connect_timeout_seconds must be 1-300");
+        }
+        if (requestTimeoutSeconds < 1 || requestTimeoutSeconds > 300) {
+            throw new IllegalArgumentException("server.request_timeout_seconds must be 1-300");
+        }
+        if (!"json".equals(transportEncoding) && !"base64_json".equals(transportEncoding)) {
+            throw new IllegalArgumentException("transport.encoding must be json or base64_json");
+        }
+        if (!"mtls".equals(authMode)) {
+            throw new IllegalArgumentException("auth.mode must be mtls in this release");
+        }
+        if (minimumTlsVersion != 12 && minimumTlsVersion != 13) {
+            throw new IllegalArgumentException("tls.minimum_version must be 1.2 or 1.3");
+        }
+        if (collectionIntervalSeconds < 900 || collectionIntervalSeconds > 86400) {
+            throw new IllegalArgumentException("collection.interval_seconds must be 900-86400");
+        }
+        if (queueMaxBytes < 1048576L || queueMaxBytes > 4294967296L) {
+            throw new IllegalArgumentException("queue.max_bytes must be 1 MiB to 4 GiB");
+        }
+        if (retryInitialSeconds <= 0 || retryMaxSeconds <= 0 || retryMaxSeconds < retryInitialSeconds) {
+            throw new IllegalArgumentException("retry settings invalid");
+        }
+        if (pauseMinutes != 60) {
+            throw new IllegalArgumentException("ui.pause_minutes must be 60");
+        }
+        if (!"INFO".equals(loggingLevel) && !"WARN".equals(loggingLevel)) {
+            throw new IllegalArgumentException("logging.level must be INFO or WARN");
+        }
+        if (loggingRetentionDays < 1 || loggingRetentionDays > 90) {
+            throw new IllegalArgumentException("logging.retention_days must be 1-90");
         }
     }
 
-    public static byte[] decrypt(byte[] key, byte[] nonce, byte[] ciphertext, byte[] associatedData) {
-        try {
-            Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-            GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH_BITS, nonce);
-            SecretKeySpec keySpec = new SecretKeySpec(key, "AES");
-            cipher.init(Cipher.DECRYPT_MODE, keySpec, spec);
-            if (associatedData != null && associatedData.length > 0) {
-                cipher.updateAAD(associatedData);
-            }
-            return cipher.doFinal(ciphertext);
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to decrypt payload", e);
-        }
-    }
-
-    public static String toBase64(byte[] value) {
-        return Base64.getEncoder().encodeToString(value);
-    }
-
-    public static byte[] fromBase64(String value) {
-        return Base64.getDecoder().decode(value);
-    }
-
-    public static class EncryptedPayload {
-        private final byte[] nonce;
-        private final byte[] cipherText;
-
-        public EncryptedPayload(byte[] nonce, byte[] cipherText) {
-            this.nonce = nonce;
-            this.cipherText = cipherText;
-        }
-
-        public byte[] getNonce() { return nonce; }
-        public byte[] getCipherText() { return cipherText; }
-    }
+    public String getBaseUrl() { return baseUrl; }
+    public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
+    public int getConnectTimeoutSeconds() { return connectTimeoutSeconds; }
+    public void setConnectTimeoutSeconds(int connectTimeoutSeconds) { this.connectTimeoutSeconds = connectTimeoutSeconds; }
+    public int getRequestTimeoutSeconds() { return requestTimeoutSeconds; }
+    public void setRequestTimeoutSeconds(int requestTimeoutSeconds) { this.requestTimeoutSeconds = requestTimeoutSeconds; }
+    public String getTransportEncoding() { return transportEncoding; }
+    public void setTransportEncoding(String transportEncoding) { this.transportEncoding = transportEncoding; }
+    public String getAuthMode() { return authMode; }
+    public void setAuthMode(String authMode) { this.authMode = authMode; }
+    public String getClientCertificateAlias() { return clientCertificateAlias; }
+    public void setClientCertificateAlias(String clientCertificateAlias) { this.clientCertificateAlias = clientCertificateAlias; }
+    public int getMinimumTlsVersion() { return minimumTlsVersion; }
+    public void setMinimumTlsVersion(int minimumTlsVersion) { this.minimumTlsVersion = minimumTlsVersion; }
+    public int getCollectionIntervalSeconds() { return collectionIntervalSeconds; }
+    public void setCollectionIntervalSeconds(int collectionIntervalSeconds) { this.collectionIntervalSeconds = collectionIntervalSeconds; }
+    public boolean isLocationEnabled() { return locationEnabled; }
+    public void setLocationEnabled(boolean locationEnabled) { this.locationEnabled = locationEnabled; }
+    public long getQueueMaxBytes() { return queueMaxBytes; }
+    public void setQueueMaxBytes(long queueMaxBytes) { this.queueMaxBytes = queueMaxBytes; }
+    public int getRetryInitialSeconds() { return retryInitialSeconds; }
+    public void setRetryInitialSeconds(int retryInitialSeconds) { this.retryInitialSeconds = retryInitialSeconds; }
+    public int getRetryMaxSeconds() { return retryMaxSeconds; }
+    public void setRetryMaxSeconds(int retryMaxSeconds) { this.retryMaxSeconds = retryMaxSeconds; }
+    public boolean isResetAcknowledgedOnStart() { return resetAcknowledgedOnStart; }
+    public void setResetAcknowledgedOnStart(boolean resetAcknowledgedOnStart) { this.resetAcknowledgedOnStart = resetAcknowledgedOnStart; }
+    public int getPauseMinutes() { return pauseMinutes; }
+    public void setPauseMinutes(int pauseMinutes) { this.pauseMinutes = pauseMinutes; }
+    public String getLoggingLevel() { return loggingLevel; }
+    public void setLoggingLevel(String loggingLevel) { this.loggingLevel = loggingLevel; }
+    public int getLoggingRetentionDays() { return loggingRetentionDays; }
+    public void setLoggingRetentionDays(int loggingRetentionDays) { this.loggingRetentionDays = loggingRetentionDays; }
 }

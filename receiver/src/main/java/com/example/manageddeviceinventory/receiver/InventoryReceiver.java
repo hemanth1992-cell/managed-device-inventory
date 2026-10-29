@@ -1,52 +1,32 @@
-package com.example.manageddeviceinventory.receiver;
+package com.example.manageddeviceinventory.core.validator;
 
 import com.example.manageddeviceinventory.core.model.InventoryEvent;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.ArrayList;
+import java.util.List;
 
-public class InventoryReceiver {
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-    private final Map<String, InventoryEvent> accepted = new ConcurrentHashMap<>();
-
-    public EventProcessingResult accept(String jsonBody) {
-        try {
-            InventoryEvent event = MAPPER.readValue(jsonBody, InventoryEvent.class);
-            if (event.getEventId() == null) {
-                return EventProcessingResult.rejected(400, "invalid_event_id");
-            }
-            if (accepted.containsKey(event.getEventId())) {
-                return EventProcessingResult.accepted(event.getEventId(), 200, "already_received");
-            }
-            accepted.put(event.getEventId(), event);
-            return EventProcessingResult.accepted(event.getEventId(), 201, "accepted");
-        } catch (Exception ex) {
-            return EventProcessingResult.rejected(400, "invalid_payload");
+public class InventoryValidator {
+    public static List<String> validate(InventoryEvent event) {
+        List<String> findings = new ArrayList<>();
+        if (event == null) {
+            findings.add("event is null");
+            return findings;
         }
-    }
-
-    public static class EventProcessingResult {
-        private final int status;
-        private final String eventId;
-        private final String code;
-
-        private EventProcessingResult(int status, String eventId, String code) {
-            this.status = status;
-            this.eventId = eventId;
-            this.code = code;
+        if (event.getSchemaVersion() == null || !"1.0".equals(event.getSchemaVersion())) {
+            findings.add("schema_version must be 1.0");
         }
-
-        public static EventProcessingResult accepted(String eventId, int status, String code) {
-            return new EventProcessingResult(status, eventId, code);
+        if (event.getEventId() == null || !event.getEventId().matches("^[0-9a-fA-F-]{36}$")) {
+            findings.add("event_id must be a UUID");
         }
-
-        public static EventProcessingResult rejected(int status, String code) {
-            return new EventProcessingResult(status, null, code);
+        if (event.getCollectedAt() == null || !event.getCollectedAt().endsWith("Z")) {
+            findings.add("collected_at must be UTC with Z suffix");
         }
-
-        public int getStatus() { return status; }
-        public String getEventId() { return eventId; }
-        public String getCode() { return code; }
+        if (event.getInstallationId() == null || !event.getInstallationId().matches("^[0-9a-fA-F-]{36}$")) {
+            findings.add("installation_id must be a UUID");
+        }
+        if (event.getDevice() == null) {
+            findings.add("device payload is required");
+        }
+        return findings;
     }
 }

@@ -1,32 +1,69 @@
-package com.example.manageddeviceinventory.core.validator;
+package com.example.manageddeviceinventory.core.agent;
 
+import com.example.manageddeviceinventory.core.collector.InventoryCollector;
+import com.example.manageddeviceinventory.core.config.AgentConfig;
+import com.example.manageddeviceinventory.core.crypto.CryptoUtil;
 import com.example.manageddeviceinventory.core.model.InventoryEvent;
+import com.example.manageddeviceinventory.core.queue.EncryptedDocumentQueue;
+import com.example.manageddeviceinventory.core.queue.InventorySender;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.nio.file.Path;
+import java.util.Optional;
+import java.util.UUID;
 
-public class InventoryValidator {
-    public static List<String> validate(InventoryEvent event) {
-        List<String> findings = new ArrayList<>();
+public class ManagedInventoryAgent {
+    private final AgentConfig config;
+    private final InventoryCollector collector;
+    private final EncryptedDocumentQueue queue;
+    private final InventorySender sender;
+    private final Scheduler scheduler;
+    private final ObjectMapper mapper = new ObjectMapper();
+    private AgentStatus status = AgentStatus.RUNNING;
+
+    public ManagedInventoryAgent(AgentConfig config, InventoryCollector collector) throws Exception {
+        this.config = config;
+        this.collector = collector;
+        this.queue = new EncryptedDocumentQueue(Path.of("./queue"), CryptoUtil.createKey(), config.getQueueMaxBytes());
+        this.sender = new InventorySender(config.getBaseUrl());
+        this.scheduler = new Scheduler(java.time.Clock.systemUTC(), config.getCollectionIntervalSeconds());
+    }
+
+    public Optional<InventoryEvent> collectOnce() {
+        InventoryEvent event = collector.collect();
         if (event == null) {
-            findings.add("event is null");
-            return findings;
+            status = AgentStatus.ATTENTION_REQUIRED;
+            return Optional.empty();
         }
-        if (event.getSchemaVersion() == null || !"1.0".equals(event.getSchemaVersion())) {
-            findings.add("schema_version must be 1.0");
+        event.setEventId(UUID.randomUUID().toString());
+        event.setInstallationId(UUID.randomUUID().toString());
+        return Optional.of(event);
+    }
+
+    public void queueEvent(InventoryEvent event) throws Exception {
+        queue.enqueue(event.getEventId(), mapper.writeValueAsString(event));
+        scheduler.markCollected();
+    }
+
+    public void sendPending() throws Exception {
+        for (EncryptedDocumentQueue.QueuedDocument q : queue.toDebugView()) {
+            Optional<String> payload = queue.dequeue(q.getEventId());
+            if (payload.isEmpty()) {
+                continue;
+            }
+            InventoryEvent event = mapper.readValue(payload.get(), InventoryEvent.class);
+            InventorySender.SendResult result = sender.send(event);
+            status = (result.getStatusCode() >= 200 && result.getStatusCode() < 300)
+                ? AgentStatus.RUNNING
+                : AgentStatus.OFFLINE_RETRYING;
         }
-        if (event.getEventId() == null || !event.getEventId().matches("^[0-9a-fA-F-]{36}$")) {
-            findings.add("event_id must be a UUID");
-        }
-        if (event.getCollectedAt() == null || !event.getCollectedAt().endsWith("Z")) {
-            findings.add("collected_at must be UTC with Z suffix");
-        }
-        if (event.getInstallationId() == null || !event.getInstallationId().matches("^[0-9a-fA-F-]{36}$")) {
-            findings.add("installation_id must be a UUID");
-        }
-        if (event.getDevice() == null) {
-            findings.add("device payload is required");
-        }
-        return findings;
+    }
+
+    public boolean shouldCollect() {
+        return scheduler.shouldCollectNow();
+    }
+
+    public AgentStatus getStatus() {
+        return status;
     }
 }

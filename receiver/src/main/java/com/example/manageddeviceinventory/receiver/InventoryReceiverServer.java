@@ -1,22 +1,23 @@
 package com.example.manageddeviceinventory.receiver;
 
 import com.example.manageddeviceinventory.core.model.InventoryEvent;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class InventoryReceiver {
+    private static final ObjectMapper MAPPER = new ObjectMapper();
     private final Map<String, InventoryEvent> accepted = new ConcurrentHashMap<>();
 
     public EventProcessingResult accept(String jsonBody) {
         try {
-            InventoryEvent event = com.fasterxml.jackson.databind.ObjectMapperHolder.MAPPER.readValue(jsonBody, InventoryEvent.class);
+            InventoryEvent event = MAPPER.readValue(jsonBody, InventoryEvent.class);
             if (event.getEventId() == null) {
                 return EventProcessingResult.rejected(400, "invalid_event_id");
             }
-            InventoryEvent prior = accepted.get(event.getEventId());
-            if (prior != null) {
-                return EventProcessingResult.accepted(event.getEventId(), 200, "accepted");
+            if (accepted.containsKey(event.getEventId())) {
+                return EventProcessingResult.accepted(event.getEventId(), 200, "already_received");
             }
             accepted.put(event.getEventId(), event);
             return EventProcessingResult.accepted(event.getEventId(), 201, "accepted");
@@ -48,8 +49,4 @@ public class InventoryReceiver {
         public String getEventId() { return eventId; }
         public String getCode() { return code; }
     }
-}
-
-class ObjectMapperHolder {
-    static final com.fasterxml.jackson.databind.ObjectMapper MAPPER = new com.fasterxml.jackson.databind.ObjectMapper();
 }

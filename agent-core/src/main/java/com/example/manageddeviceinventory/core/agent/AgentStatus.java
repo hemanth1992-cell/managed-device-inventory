@@ -1,7 +1,7 @@
 package com.example.manageddeviceinventory.core.queue;
 
-import com.example.manageddeviceinventory.core.config.AgentConfig;
 import com.example.manageddeviceinventory.core.model.InventoryEvent;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -10,44 +10,37 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 
 public class InventorySender {
-    private final AgentConfig config;
-    private final HttpClient client;
+    private final String baseUrl;
+    private final HttpClient httpClient;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public InventorySender(AgentConfig config) {
-        this.config = config;
-        this.client = HttpClient.newBuilder().build();
+    public InventorySender(String baseUrl) {
+        this.baseUrl = baseUrl;
+        this.httpClient = HttpClient.newBuilder().build();
     }
 
     public SendResult send(InventoryEvent event) throws Exception {
-        String body = com.fasterxml.jackson.databind.ObjectMapperHolder.MAPPER.writeValueAsString(event);
+        String body = objectMapper.writeValueAsString(event);
         HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(config.getBaseUrl() + "/api/v1/inventory"))
+            .uri(URI.create(baseUrl + "/api/v1/inventory"))
             .header("Content-Type", "application/json; charset=utf-8")
             .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
             .build();
 
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-        boolean accepted = response.statusCode() == 200 || response.statusCode() == 201;
-        return new SendResult(accepted, response.statusCode(), response.body());
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        return new SendResult(response.statusCode(), response.body());
     }
 
     public static class SendResult {
-        private final boolean accepted;
-        private final int httpStatus;
-        private final String responseBody;
+        private final int statusCode;
+        private final String body;
 
-        public SendResult(boolean accepted, int httpStatus, String responseBody) {
-            this.accepted = accepted;
-            this.httpStatus = httpStatus;
-            this.responseBody = responseBody;
+        public SendResult(int statusCode, String body) {
+            this.statusCode = statusCode;
+            this.body = body;
         }
 
-        public boolean isAccepted() { return accepted; }
-        public int getHttpStatus() { return httpStatus; }
-        public String getResponseBody() { return responseBody; }
+        public int getStatusCode() { return statusCode; }
+        public String getBody() { return body; }
     }
-}
-
-class ObjectMapperHolder {
-    static final com.fasterxml.jackson.databind.ObjectMapper MAPPER = new com.fasterxml.jackson.databind.ObjectMapper();
 }

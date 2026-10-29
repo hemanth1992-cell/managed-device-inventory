@@ -1,46 +1,81 @@
 package com.example.manageddeviceinventory.core.queue;
 
-import com.example.manageddeviceinventory.core.model.InventoryEvent;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.example.manageddeviceinventory.core.crypto.CryptoUtil;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
-public class InventorySender {
-    private final String baseUrl;
-    private final HttpClient httpClient;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+public class EncryptedDocumentQueue {
+    private final Path queueDirectory;
+    private final byte[] key;
+    private final long maxBytes;
+    private final Map<String, QueuedDocument> documents = new ConcurrentHashMap<>();
 
-    public InventorySender(String baseUrl) {
-        this.baseUrl = baseUrl;
-        this.httpClient = HttpClient.newBuilder().build();
+    public EncryptedDocumentQueue(Path queueDirectory, byte[] key, long maxBytes) throws IOException {
+        this.queueDirectory = queueDirectory;
+        this.key = key;
+        this.maxBytes = maxBytes;
+        Files.createDirectories(queueDirectory);
     }
 
-    public SendResult send(InventoryEvent event) throws Exception {
-        String body = objectMapper.writeValueAsString(event);
-        HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(baseUrl + "/api/v1/inventory"))
-            .header("Content-Type", "application/json; charset=utf-8")
-            .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
-            .build();
-
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        return new SendResult(response.statusCode(), response.body());
+    public void enqueue(String eventId, String jsonContent) throws IOException {
+        byte[] plain = jsonContent.getBytes(StandardCharsets.UTF_8);
+        CryptoUtil.EncryptedPayload encrypted = CryptoUtil.encrypt(key, plain, eventId.getBytes(StandardCharsets.UTF_8));
+        String blob = CryptoUtil.toBase64(encrypted.getNonce()) + ":" + CryptoUtil.toBase64(encrypted.getCipherText());
+        Path target = queueDirectory.resolve(eventId + ".enc");
+        Files.writeString(target, blob, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+        documents.put(eventId, new QueuedDocument(eventId, target.toString(), blob.length()));
     }
 
-    public static class SendResult {
-        private final int statusCode;
-        private final String body;
+    public Optional<String> dequeue(String eventId) throws IOException {
+        QueuedDocument doc = documents.remove(eventId);
+        if (doc == null) {
+            return Optional.empty();
+        }
+        Path target = Path.of(doc.getPath());
+        String blob = Files.readString(target, StandardCharsets.UTF_8);
+        Files.deleteIfExists(target);
 
-        public SendResult(int statusCode, String body) {
-            this.statusCode = statusCode;
-            this.body = body;
+        String[] parts = blob.split(":", 2);
+        if (parts.length != 2) {
+            throw new IllegalStateException("Encrypted queue data malformed");
         }
 
-        public int getStatusCode() { return statusCode; }
-        public String getBody() { return body; }
+        byte[] nonce = CryptoUtil.fromBase64(parts[0]);
+        byte[] ciphertext = CryptoUtil.fromBase64(parts[1]);
+        byte[] decrypted = CryptoUtil.decrypt(key, nonce, ciphertext, eventId.getBytes(StandardCharsets.UTF_8));
+        return Optional.of(new String(decrypted, StandardCharsets.UTF_8));
+    }
+
+    public int size() { return documents.size(); }
+
+    public List<QueuedDocument> toDebugView() {
+        return new ArrayList<>(documents.values());
+    }
+
+    public long getMaxBytes() { return maxBytes; }
+
+    public static class QueuedDocument {
+        private final String eventId;
+        private final String path;
+        private final long approxBytes;
+
+        public QueuedDocument(String eventId, String path, long approxBytes) {
+            this.eventId = eventId;
+            this.path = path;
+            this.approxBytes = approxBytes;
+        }
+
+        public String getEventId() { return eventId; }
+        public String getPath() { return path; }
+        public long getApproxBytes() { return approxBytes; }
     }
 }
