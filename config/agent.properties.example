@@ -1,0 +1,26 @@
+# Required: HTTPS origin, without a path, user info, query, or fragment.
+server.base_url=https://inventory.example.com
+server.connect_timeout_seconds=10
+server.request_timeout_seconds=30
+
+transport.encoding=json
+auth.mode=mtls
+auth.client_certificate_alias=managed-device-inventory
+tls.minimum_version=1.2
+
+collection.interval_seconds=3600
+collection.identity.enabled=true
+collection.os_device_id.enabled=true
+collection.os_product_id.enabled=true
+collection.serial_number.enabled=true
+collection.mac_address.enabled=true
+collection.location.enabled=false
+
+queue.max_bytes=268435456
+queue.retry_initial_seconds=60
+queue.retry_max_seconds=3600
+queue.reset_acknowledged_on_start=false
+
+ui.pause_minutes=60
+logging.level=INFO
+logging.retention_days=14

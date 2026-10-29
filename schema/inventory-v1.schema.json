@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/inventory-v1.schema.json",
+  "title": "Managed Device Inventory Event 1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "event_id": { "type": "string", "format": "uuid" },
+    "collected_at": { "type": "string", "format": "date-time", "pattern": "Z$", "maxLength": 40 },
+    "installation_id": { "type": "string", "format": "uuid" },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "platform": { "enum": ["windows", "macos", "linux"] }
+      },
+      "required": ["version", "platform"]
+    },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "device_name": { "anyOf": [{"type": "string", "minLength": 1, "maxLength": 256}, {"type": "null"}] },
+        "hostname": { "anyOf": [{"type": "string", "minLength": 1, "maxLength": 256}, {"type": "null"}] },
+        "processor": { "$ref": "#/$defs/processor" },
+        "memory": { "$ref": "#/$defs/memory" },
+        "storage": { "anyOf": [{"type": "array", "items": {"$ref": "#/$defs/storage"}, "maxItems": 128}, {"type": "null"}] },
+        "identifiers": { "$ref": "#/$defs/identifiers" },
+        "network_interfaces": { "anyOf": [{"type": "array", "items": {"$ref": "#/$defs/interface"}, "maxItems": 128}, {"type": "null"}] },
+        "system_type": { "anyOf": [{"type": "string", "minLength": 1, "maxLength": 256}, {"type": "null"}] },
+        "os": { "$ref": "#/$defs/os" },
+        "manufacturer": { "anyOf": [{"type": "string", "minLength": 1, "maxLength": 256}, {"type": "null"}] },
+        "antivirus": { "anyOf": [{"type": "array", "items": {"$ref": "#/$defs/antivirus"}, "maxItems": 32}, {"type": "null"}] },
+        "battery": { "anyOf": [{"$ref": "#/$defs/battery"}, {"type": "null"}] },
+        "users": { "anyOf": [{"type": "array", "items": {"$ref": "#/$defs/user"}, "maxItems": 64}, {"type": "null"}] },
+        "location": { "anyOf": [{"$ref": "#/$defs/location"}, {"type": "null"}] }
+      },
+      "required": ["device_name", "hostname", "processor", "memory", "storage", "identifiers", "network_interfaces", "system_type", "os", "manufacturer", "antivirus", "battery", "users", "location"]
+    },
+    "field_issues": { "type": "array", "items": { "$ref": "#/$defs/issue" }, "maxItems": 256 }
+  },
+  "required": ["schema_version", "event_id", "collected_at", "installation_id", "agent", "device", "field_issues"],
+  "$defs": {
+    "processor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": { "anyOf": [{"type": "string", "minLength": 1, "maxLength": 256}, {"type": "null"}] },
+        "architecture": { "anyOf": [{"type": "string", "minLength": 1, "maxLength": 64}, {"type": "null"}] },
+        "logical_processors": { "anyOf": [{"type": "integer", "minimum": 1, "maximum": 4096}, {"type": "null"}] }
+      },
+      "required": ["model", "architecture", "logical_processors"]
+    },
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "installed_bytes": { "anyOf": [{"type": "integer", "minimum": 1}, {"type": "null"}] }
+      },
+      "required": ["installed_bytes"]
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "anyOf": [{"type": "string", "minLength": 1, "maxLength": 256}, {"type": "null"}] },
+        "total_bytes": { "anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}] },
+        "free_bytes": { "anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}] }
+      },
+      "required": ["name", "total_bytes", "free_bytes"]
+    },
+    "identifiers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "device_id": { "anyOf": [{"type": "string", "minLength": 1, "maxLength": 256}, {"type": "null"}] },
+        "device_id_source": { "anyOf": [{"type": "string", "minLength": 1, "maxLength": 256}, {"type": "null"}] },
+        "product_id": { "anyOf": [{"type": "string", "minLength": 1, "maxLength": 256}, {"type": "null"}] },
+        "serial_number": { "anyOf": [{"type": "string", "minLength": 1, "maxLength": 256}, {"type": "null"}] }
+      },
+      "required": ["device_id", "device_id_source", "product_id", "serial_number"]
+    },
+    "interface": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "mac": { "type": "string", "pattern": "^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$" },
+        "kind": { "enum": ["physical", "virtual", "unknown"] }
+      },
+      "required": ["name", "mac", "kind"]
+    },
+    "os": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}] },
+        "edition": { "anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}] },
+        "version": { "anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}] },
+        "installed_at": { "anyOf": [{"type": "string", "format": "date-time", "pattern": "Z$", "maxLength": 40}, {"type": "null"}] },
+        "build": { "anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}] }
+      },
+      "required": ["name", "edition", "version", "installed_at", "build"]
+    },
+    "antivirus": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "status": { "enum": ["enabled", "disabled", "unknown"] }
+      },
+      "required": ["name", "status"]
+    },
+    "battery": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "present": { "type": "boolean" },
+        "percent": { "anyOf": [{"type": "number", "minimum": 0, "maximum": 100}, {"type": "null"}] },
+        "charging": { "anyOf": [{"type": "boolean"}, {"type": "null"}] }
+      },
+      "required": ["present", "percent", "charging"]
+    },
+    "user": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "account": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "domain": { "anyOf": [{"type": "string", "minLength": 1, "maxLength": 256}, {"type": "null"}] },
+        "ad_id": { "anyOf": [{"type": "string", "minLength": 1, "maxLength": 256}, {"type": "null"}] },
+        "ad_id_type": { "enum": ["sid", "domain_account", "upn", null] },
+        "email": { "anyOf": [{"type": "string", "format": "email", "minLength": 3, "maxLength": 254}, {"type": "null"}] }
+      },
+      "required": ["account", "domain", "ad_id", "ad_id_type", "email"]
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "latitude": { "type": "number", "minimum": -90, "maximum": 90 },
+        "longitude": { "type": "number", "minimum": -180, "maximum": 180 },
+        "accuracy_meters": { "anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}] },
+        "observed_at": { "type": "string", "format": "date-time", "pattern": "Z$", "maxLength": 40 }
+      },
+      "required": ["latitude", "longitude", "accuracy_meters", "observed_at"]
+    },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "field": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^device\\.[a-zA-Z0-9_.]+$" },
+        "reason": { "enum": ["unavailable", "unsupported", "permission_denied", "disabled", "collector_error", "not_applicable"] }
+      },
+      "required": ["field", "reason"]
+    }
+  }
+}
