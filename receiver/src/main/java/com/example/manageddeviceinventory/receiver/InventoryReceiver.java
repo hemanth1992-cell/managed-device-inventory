@@ -1,27 +1,52 @@
-package com.example.manageddeviceinventory.core;
+package com.example.manageddeviceinventory.receiver;
 
-import com.example.manageddeviceinventory.core.crypto.CryptoUtil;
-import com.example.manageddeviceinventory.core.queue.EncryptedDocumentQueue;
-import org.junit.jupiter.api.Test;
+import com.example.manageddeviceinventory.core.model.InventoryEvent;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Optional;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
-import static org.junit.jupiter.api.Assertions.*;
+public class InventoryReceiver {
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private final Map<String, InventoryEvent> accepted = new ConcurrentHashMap<>();
 
-class QueueEncryptionTest {
-    @Test
-    void encryptedQueueStoresAndRecoversPayload() throws Exception {
-        Path dir = Files.createTempDirectory("queue-test");
-        var key = CryptoUtil.createKey();
-        EncryptedDocumentQueue queue = new EncryptedDocumentQueue(dir, key, 1024 * 1024);
+    public EventProcessingResult accept(String jsonBody) {
+        try {
+            InventoryEvent event = MAPPER.readValue(jsonBody, InventoryEvent.class);
+            if (event.getEventId() == null) {
+                return EventProcessingResult.rejected(400, "invalid_event_id");
+            }
+            if (accepted.containsKey(event.getEventId())) {
+                return EventProcessingResult.accepted(event.getEventId(), 200, "already_received");
+            }
+            accepted.put(event.getEventId(), event);
+            return EventProcessingResult.accepted(event.getEventId(), 201, "accepted");
+        } catch (Exception ex) {
+            return EventProcessingResult.rejected(400, "invalid_payload");
+        }
+    }
 
-        queue.enqueue("event-123", "{\"type\":\"inventory\"}");
-        Optional<String> result = queue.dequeue("event-123");
+    public static class EventProcessingResult {
+        private final int status;
+        private final String eventId;
+        private final String code;
 
-        assertTrue(result.isPresent());
-        assertTrue(result.get().contains("inventory"));
-        assertEquals(0, queue.size());
+        private EventProcessingResult(int status, String eventId, String code) {
+            this.status = status;
+            this.eventId = eventId;
+            this.code = code;
+        }
+
+        public static EventProcessingResult accepted(String eventId, int status, String code) {
+            return new EventProcessingResult(status, eventId, code);
+        }
+
+        public static EventProcessingResult rejected(int status, String code) {
+            return new EventProcessingResult(status, null, code);
+        }
+
+        public int getStatus() { return status; }
+        public String getEventId() { return eventId; }
+        public String getCode() { return code; }
     }
 }

@@ -1,79 +1,85 @@
-package com.example.manageddeviceinventory.core.crypto;
+package com.example.manageddeviceinventory.core.queue;
 
-import javax.crypto.Cipher;
-import javax.crypto.spec.GCMParameterSpec;
-import javax.crypto.spec.SecretKeySpec;
+import com.example.manageddeviceinventory.core.crypto.CryptoUtil;
+
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.security.SecureRandom;
-import java.util.Base64;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
-public class CryptoUtil {
-    public static final String TRANSFORMATION = "AES/GCM/NoPadding";
-    private static final int GCM_TAG_LENGTH_BITS = 128;
-    private static final int IV_BYTES = 12;
+public class EncryptedDocumentQueue {
+    private final Path queueDirectory;
+    private final byte[] key;
+    private final long maxBytes;
+    private final Map<String, QueuedDocument> documents = new ConcurrentHashMap<>();
 
-    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
-
-    public static byte[] createKey() {
-        byte[] key = new byte[32];
-        SECURE_RANDOM.nextBytes(key);
-        return key;
+    public EncryptedDocumentQueue(Path queueDirectory, byte[] key, long maxBytes) throws IOException {
+        this.queueDirectory = queueDirectory;
+        this.key = key;
+        this.maxBytes = maxBytes;
+        Files.createDirectories(queueDirectory);
     }
 
-    public static byte[] createNonce() {
-        byte[] nonce = new byte[IV_BYTES];
-        SECURE_RANDOM.nextBytes(nonce);
-        return nonce;
+    public void enqueue(String eventId, String jsonContent) throws IOException {
+        byte[] plain = jsonContent.getBytes(StandardCharsets.UTF_8);
+        CryptoUtil.EncryptedPayload encrypted = CryptoUtil.encrypt(key, plain, eventId.getBytes(StandardCharsets.UTF_8));
+        String blob = CryptoUtil.toBase64(encrypted.getNonce()) + ":" + CryptoUtil.toBase64(encrypted.getCipherText());
+        Path target = queueDirectory.resolve(eventId + ".enc");
+        Files.writeString(target, blob, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+        documents.put(eventId, new QueuedDocument(eventId, target.toString(), blob.length()));
     }
 
-    public static EncryptedPayload encrypt(byte[] key, byte[] plainText, byte[] associatedData) {
-        try {
-            byte[] nonce = createNonce();
-            Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-            GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH_BITS, nonce);
-            SecretKeySpec keySpec = new SecretKeySpec(key, "AES");
-            cipher.init(Cipher.ENCRYPT_MODE, keySpec, spec);
-            if (associatedData != null && associatedData.length > 0) {
-                cipher.updateAAD(associatedData);
-            }
-            byte[] ciphertext = cipher.doFinal(plainText);
-            return new EncryptedPayload(nonce, ciphertext);
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to encrypt payload", e);
+    public Optional<String> dequeue(String eventId) throws IOException {
+        QueuedDocument doc = documents.remove(eventId);
+        if (doc == null) {
+            return Optional.empty();
         }
-    }
+        Path target = Path.of(doc.getPath());
+        String blob = Files.readString(target, StandardCharsets.UTF_8);
+        Files.deleteIfExists(target);
 
-    public static byte[] decrypt(byte[] key, byte[] nonce, byte[] cipherText, byte[] associatedData) {
-        try {
-            Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-            GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH_BITS, nonce);
-            SecretKeySpec keySpec = new SecretKeySpec(key, "AES");
-            cipher.init(Cipher.DECRYPT_MODE, keySpec, spec);
-            if (associatedData != null && associatedData.length > 0) { cipher.updateAAD(associatedData); }
-            return cipher.doFinal(cipherText);
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to decrypt payload", e);
+        String[] parts = blob.split(":", 2);
+        if (parts.length != 2) {
+            throw new IllegalStateException("Encrypted queue data malformed");
         }
+        byte[] nonce = CryptoUtil.fromBase64(parts[0]);
+        byte[] ciphertext = CryptoUtil.fromBase64(parts[1]);
+        byte[] decrypted = CryptoUtil.decrypt(key, nonce, ciphertext, eventId.getBytes(StandardCharsets.UTF_8));
+        return Optional.of(new String(decrypted, StandardCharsets.UTF_8));
     }
 
-    public static String toBase64(byte[] value) {
-        return Base64.getEncoder().encodeToString(value);
+    public int size() {
+        return documents.size();
     }
 
-    public static byte[] fromBase64(String base64) {
-        return Base64.getDecoder().decode(base64);
+    public List<QueuedDocument> toDebugView() {
+        return new ArrayList<>(documents.values());
     }
 
-    public static class EncryptedPayload {
-        private final byte[] nonce;
-        private final byte[] cipherText;
+    public long getMaxBytes() {
+        return maxBytes;
+    }
 
-        public EncryptedPayload(byte[] nonce, byte[] cipherText) {
-            this.nonce = nonce;
-            this.cipherText = cipherText;
+    public static class QueuedDocument {
+        private final String eventId;
+        private final String path;
+        private final long approxBytes;
+
+        public QueuedDocument(String eventId, String path, long approxBytes) {
+            this.eventId = eventId;
+            this.path = path;
+            this.approxBytes = approxBytes;
         }
 
-        public byte[] getNonce() { return nonce; }
-        public byte[] getCipherText() { return cipherText; }
+        public String getEventId() { return eventId; }
+        public String getPath() { return path; }
+        public long getApproxBytes() { return approxBytes; }
     }
 }
